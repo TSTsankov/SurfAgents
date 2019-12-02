@@ -1,0 +1,279 @@
+using MLAgents;
+using UnityEngine;
+
+public class SurfAgent : Agent {
+	private SurfAcademy myAcademy;
+	private Fragsurf.Movement.SurfCharacter surfComp;
+
+	private RayPerceptionSurf rayPer;
+
+	float[] frontA = { 55, 60, 65, 70, 75, 105, 110, 115, 120, 125 }; //x10
+	float[] frontB = { 35, 40, 65, 90, 105, 130, 145 }; //x7
+	float[] down = {-135, -90, -45, -0, 45, 90, 135, 180 }; //x8
+	//float[] full = new float[] { 180, 165, 150, 135, 120, 105, 90, 75, 60, 45, 30, 15, 0, -15, -30, -45, -60, -75, -90, -105, -120, -135, -150, -165 }; //24
+	float nr = 0, v = 0, fDT = 0.0002f;
+
+	public Vector3[] entrances;
+	public LayerMask layerMask;
+	//public float stepRatio = 0;
+	public int cageFall = 0;
+
+	public override void InitializeAgent () {
+		surfComp = transform.parent.GetComponent<Fragsurf.Movement.SurfCharacter> ();
+		surfComp.rewardAction = AddReward;
+		surfComp.fallInCage = () => {
+			AddReward (-.5f);
+			surfComp.multiplier = 1;
+			if (++cageFall >= Mathf.Clamp(200 - 125 * (((float) myAcademy.GetTotalStepCount ()) / 0.000002f), 10, 200)) {
+				cageFall = 0;
+				AddReward (-5f);
+				Done ();
+			}
+			//Done ();
+			//SetReward(-1f);
+			
+		};
+
+		myAcademy = FindObjectOfType<SurfAcademy> ();
+		rayPer = GetComponent<RayPerceptionSurf> ();
+
+		for (int i = 0; i < frontB.Length; i++) {
+			frontA[i] += 90;
+			frontB[i] += 90;
+		}
+		frontA[5] += 90;
+		GameObject[] teleports = GameObject.FindGameObjectsWithTag ("banana");
+		entrances = new Vector3[teleports.Length];
+		for (int i = 0; i < teleports.Length; i++)
+			entrances[i] = teleports[i].transform.position;
+
+		fDT = Time.fixedDeltaTime * 0.00275f; //Mathf.Pow (Time.fixedDeltaTime, 5); //
+
+		layerMask = LayerMask.GetMask (new string[] { "SURFABLE" });
+		Respawn ();
+	}
+
+	public override void CollectObservations () {
+
+		const float rayDistance = 50;
+		AddReward (-fDT);
+		/* float[] rayAngles = { 20f, 90f, 160f, 45f, 135f, 70f, 110f };
+		float[] rayAngles1 = { 25f, 95f, 165f, 50f, 140f, 75f, 115f };
+		float[] rayAngles2 = {-30, -60, -90, -120, -150, -180, 105f }; */
+
+		string[] detectableObjects = { "surfable", "wall", "ground" }; //, "respawnzone", "teleport"};
+		AddVectorObs (rayPer.Perceive (rayDistance, frontA, detectableObjects, 0, 0)); // 50 ||||||||||||48
+		AddVectorObs (rayPer.Perceive (rayDistance, frontA, detectableObjects, 0f, -10f)); //50
+		AddVectorObs (rayPer.Perceive (rayDistance, frontA, detectableObjects, 0f, 10f)); //50
+		AddVectorObs (rayPer.Perceive (rayDistance, frontA, detectableObjects, 0f, -35f)); //50
+		AddVectorObs (rayPer.Perceive (rayDistance, frontA, detectableObjects, 0f, 35f)); //50
+		//AddVectorObs (rayPer.Perceive (75, frontA, detectableObjects, 0f, -20f)); //48
+		AddVectorObs (rayPer.Perceive (rayDistance, frontB, detectableObjects, 0f, -25f)); //35
+		AddVectorObs (rayPer.Perceive (rayDistance, frontB, detectableObjects, 0f, 25f)); //35
+		AddVectorObs (rayPer.Perceive (rayDistance, frontB, detectableObjects, 0f, -50f)); //35
+		AddVectorObs (rayPer.Perceive (rayDistance, frontB, detectableObjects, 0f, 50f)); //35
+		//AddVectorObs (rayPer.Perceive (rayDistance, down, detectableObjects, 0f, 55)); //8*(3+5) = 64
+		AddVectorObs (surfingBool); //x1
+		AddVectorObs (surfComp.MoveData.Velocity * .02f); //x3
+		AddVectorObs (transform.rotation); //x4
+		AddVectorObs (surfComp._controller.Grounded); //x1
+
+		Vector3 tppos = transform.parent.position;
+
+		System.Array.Sort (entrances, delegate (Vector3 a, Vector3 b) { return Vector3.Distance (tppos, a).CompareTo (Vector3.Distance (tppos, b)); });
+		AddVectorObs (Vector3.Distance (tppos, entrances[0]) * .002f); //x1
+		AddVectorObs (Quaternion.LookRotation (entrances[0] - tppos, Vector3.up)); //x4
+		//AddVectorObs (surfComp.MoveData.Velocity.sqrMagnitude * .01f); //x1
+
+		/* 		if (text) {
+					text.text += "\n" + (surfComp.MoveData.Velocity) + "\n";
+					text.text += surfComp._controller.Grounded + "\n";
+
+					//text.text += (surfComp.MoveData.Velocity.sqrMagnitude / 0.1f) + "\n";
+				} */
+
+		/* 		if (Application.isEditor)
+					Debug.DrawLine (tppos, entrances[0], Color.magenta); */
+
+		//To get distance & direction to teleports + distance from respawnzone plane // Closest (3 teleports + closest 1 respawnzone) 
+		//48+80+96+64+5 = 245 + 48
+
+	}
+
+	//[SerializeField] UnityEngine.UI.Text text;
+	bool surfingBool = false;
+	/* public override void AgentAction (float[] vectorAction, string textAction, MLAgents.CommunicatorObjects.CustomAction customAction) {
+		if (text)
+			text.text = "move: " + customAction.Direction + "\nx: " + customAction.XAmount + "\ny: " + customAction.YAmount + "\nv-act: " + vectorAction[0];
+
+		
+			//Fwd=0; FwdLEFT=1; FwdRIGHT=2; BACKWD=3; BACKWDLEFT=4; BACKWDRIGHT=5; LEFT=6; RIGHT=7; JUMPFwd=8;
+			//JUMPFwdLEFT=9; JUMPFwdRIGHT=10; JUMPBACKWD=11; JUMPBACKWDLEFT=12; JUMPBACKWDRIGHT=13; JUMPLEFT=14; JUMPRIGHT=15; JUMP=16;
+		
+		switch (customAction.Direction) {
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Fwd:
+				surfComp.UpdateMoveData (true, false, false, false, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Fwdleft:
+				surfComp.UpdateMoveData (true, false, true, false, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Fwdright:
+				surfComp.UpdateMoveData (true, false, false, true, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Backwd:
+				surfComp.UpdateMoveData (false, true, false, false, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Backwdleft:
+				surfComp.UpdateMoveData (false, true, true, false, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Backwdright:
+				surfComp.UpdateMoveData (false, true, false, true, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Left:
+				surfComp.UpdateMoveData (false, false, true, false, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Right:
+				surfComp.UpdateMoveData (false, false, false, true, false);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpfwd:
+				surfComp.UpdateMoveData (true, false, false, false, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpfwdleft:
+				surfComp.UpdateMoveData (true, false, true, false, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpfwdright:
+				surfComp.UpdateMoveData (true, false, false, true, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpbackwd:
+				surfComp.UpdateMoveData (false, true, false, false, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpbackwdleft:
+				surfComp.UpdateMoveData (false, true, true, false, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpbackwdright:
+				surfComp.UpdateMoveData (false, true, false, true, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpleft:
+				surfComp.UpdateMoveData (false, false, true, false, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jumpright:
+				surfComp.UpdateMoveData (false, false, false, true, true);
+				break;
+			case MLAgents.CommunicatorObjects.CustomAction.Types.Direction.Jump:
+				surfComp.UpdateMoveData (false, false, false, false, true);
+				break;
+			default:
+				surfComp.UpdateMoveData (false, false, false, false, false);
+				break;
+
+		}
+
+		surfComp.UpdateRotation (customAction.XAmount, customAction.YAmount);
+	} */
+	public override void AgentAction (float[] vectorAction, string textAction) {
+
+		//stepRatio = ((float) myAcademy.GetTotalStepCount () / 1000000f);
+		//float m = 1 + stepRatio;
+
+		bool moveFwd; //= vectorAction[0] > 0.33f;
+		bool moveBack; //= vectorAction[0] < -0.33f;
+		bool moveLeft; //= vectorAction[1] > 0.33f;
+		bool moveRight; //= vectorAction[1] < -0.33f;
+		float xAxis; //= vectorAction[2];
+		float yAxis; //= vectorAction[3];
+		bool jump; //= vectorAction[4] > 0.5f;
+
+		if (brain.brainParameters.vectorActionSpaceType == SpaceType.continuous) {
+			moveFwd = vectorAction[0] > 0.33f;
+			moveBack = vectorAction[0] < -0.33f;
+			moveLeft = vectorAction[1] > 0.33f;
+			moveRight = vectorAction[1] < -0.33f;
+			xAxis = vectorAction[2];
+			yAxis = vectorAction[3];
+			jump = vectorAction[4] > 0.5f;
+		} else {
+			int FwdBack = Mathf.FloorToInt (vectorAction[0]);
+			int LeftRight = Mathf.FloorToInt (vectorAction[1]);
+			int Jump = Mathf.FloorToInt (vectorAction[2]);
+			int rotateX = Mathf.FloorToInt (vectorAction[3]);
+			int rotateY = Mathf.FloorToInt (vectorAction[4]);
+
+			moveFwd = FwdBack == 1;
+			moveBack = FwdBack == 2;
+			moveLeft = LeftRight == 1;
+			moveRight = LeftRight == 2;
+			jump = Jump == 1;
+
+			xAxis = myAcademy.curve.Evaluate (Mathf.Ceil (rotateX / 2));
+			if (rotateX % 2 == 0)
+				xAxis = -xAxis;
+
+			yAxis = myAcademy.curve.Evaluate (Mathf.Ceil (rotateY / 2));
+			if (rotateY % 2 == 0)
+				yAxis = -yAxis;
+		}
+
+		/* if (text) {
+			text.text = "moveFwd: " + moveFwd + "\n";
+			text.text += "moveBack: " + moveBack + "\n";
+			text.text += "moveLeft: " + moveLeft + "\n";
+			text.text += "moveRight: " + moveRight + "\n";
+			text.text += "jump: " + jump + "\n";
+			text.text += "x: " + xAxis + "\n";
+			text.text += "y: " + yAxis + "\n";
+		} */
+
+		v = Mathf.Abs (surfComp.MoveData.Velocity.x) + Mathf.Abs (surfComp.MoveData.Velocity.z); // + Mathf.Abs (Vector3.Cross (Vector3.up, transform.forward).magnitude);
+
+		surfingBool = Physics.Raycast (transform.parent.position, Vector3.down, 2f, layerMask);
+		if (v > 5 && surfComp.MoveData.Velocity.y >= 0 && surfingBool) { // surfing
+			AddReward (fDT * (v - 6) * Mathf.Max(1,surfComp.MoveData.Velocity.y));
+		}
+		if (surfComp._controller.Grounded) {
+			AddReward (-fDT);
+		}
+		if (surfComp.MoveData.Velocity.y > ((surfingBool) ? 1 : 8)) { //Flying
+			AddReward (fDT * surfComp.MoveData.Velocity.y);
+		}
+		float lookAngle = surfComp.MoveData.Velocity != Vector3.zero ? Quaternion.Angle (Quaternion.LookRotation (surfComp.MoveData.Velocity, Vector3.up), transform.rotation) : 0;
+		float lookPenalty = (lookAngle < 33) ? 0 : Mathf.Log10 (Mathf.Abs (lookAngle));
+		if (lookPenalty > 0)
+			AddReward (fDT * -lookPenalty);
+		/*
+		if (!surfComp._controller.Grounded) {
+			float d = Mathf.Pow(fDT, 4) * 0.0002f * );
+			Vector3 vel = surfComp.MoveData.Velocity;
+			if (vel.y > 0) AddReward (v * (1 + vel.y));
+			else AddReward (((v > 1.5f)) ? Time.deltaTime * v : Time.deltaTime * vel.y); }
+		*/
+
+		nr = (jump) ? 2 * -fDT : 0;
+		if (moveFwd || moveBack)
+			nr -= fDT;
+		if (moveLeft || moveRight)
+			nr -= fDT;
+
+		nr -= (Mathf.Abs (xAxis) + Mathf.Abs (yAxis)) * Time.fixedDeltaTime;
+
+		AddReward ((nr * Time.fixedDeltaTime));
+
+		surfComp.UpdateMoveData (moveFwd, moveBack, moveLeft, moveRight, jump);
+		surfComp.UpdateRotation (xAxis, yAxis);
+
+	}
+
+	//Rand random = new Rand ();
+	void Respawn () {
+		Transform to = GameObject.Find ("CageSpawn").transform;
+		if (to.childCount > 1)
+			surfComp.SpawnAt (to.GetChild (Random.Range (0, to.childCount)).position);
+		else
+			surfComp.SpawnAt (to.position);
+	}
+	public override void AgentReset () {
+		Respawn ();
+		surfComp.multiplier = 1;
+		cageFall = 0;
+		//ResetReward();
+	}
+}
